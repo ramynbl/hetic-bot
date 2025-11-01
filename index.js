@@ -18,55 +18,47 @@ const tz = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(tz);
 
-// ----- Config depuis .env -----
+// Config depuis .env
 const TOKEN = process.env.DISCORD_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Paris';
-const ICS_FILE = process.env.ICS_FILE; // si tu testes en local
-const ICS_URL  = process.env.ICS_URL;  // quand tu passes à l’URL
+const ICS_FILE = process.env.ICS_FILE; 
+const ICS_URL  = process.env.ICS_URL;  
 
-// ----- Client Discord -----
+// client Discord  
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
-// ----- Mémoire -----
-let eventsCache = []; // { uid, start: Dayjs, end: Dayjs, summary, location, description }
-const sentKeys = new Set(); // pour éviter d'envoyer deux fois le même rappel (clé = uid+start)
+let eventsCache = []; 
+const sentKeys = new Set(); 
 
-/**
- * Helper: nettoyage des espaces (les ICS plient les lignes → espaces bizarres)
- */
+
 function squashSpaces(str = '') {
   return String(str).replace(/\s+/g, ' ').trim();
 }
 
-/**
- * Helper: extraire le nom du cours (avant la 1ère virgule)
- * et le prof (segment qui commence par M./Mme/Mr/Mrs/Ms jusqu'à la virgule suivante)
- * - robuste aux retours à la ligne ICS et aux espaces multiples.
- */
+// Helper
 function parseSummary(summary, description = '') {
   const s = squashSpaces(summary);
 
-  // Cours = texte avant la 1re virgule
+
   const firstComma = s.indexOf(',');
   const course = (firstComma === -1 ? s : s.slice(0, firstComma)).trim() || '(Sans titre)';
 
-  // Prof = on cherche un segment "M." / "Mme" / "Mr" / "Mrs" / "Ms" suivi de n'importe quoi jusqu'à la prochaine virgule
   let prof = null;
   const profMatch = s.match(/(?:^|,\s*)(M\.|Mme|Mr|Mrs|Ms)\s*[^,]+/i);
   if (profMatch) {
-    // extrait le segment trouvé, sans la virgule qui précède
+   
     const start = profMatch.index ?? 0;
     let seg = s.slice(start).replace(/^,\s*/, '');
-    // on coupe à la prochaine virgule (fin du segment)
+
     const nextComma = seg.indexOf(',');
     if (nextComma !== -1) seg = seg.slice(0, nextComma);
     prof = squashSpaces(seg);
   }
 
-  // Si toujours rien, on tente la description (1re ligne qui commence par M./Mme...)
+
   if (!prof && description) {
     const line = description
       .split('\n')
@@ -78,7 +70,7 @@ function parseSummary(summary, description = '') {
   return { course, prof: prof || '—' };
 }
 
-// ----- Lecture du calendrier -----
+// Lecture du calendrier
 async function loadCalendar() {
   try {
     let data;
@@ -114,12 +106,12 @@ async function loadCalendar() {
   }
 }
 
-// ----- Trouver le prochain cours (après maintenant) -----
+// Trouver le prochain cours
 function getNextEvent(now = dayjs().tz(TIMEZONE)) {
   return eventsCache.find(ev => ev.start.isAfter(now));
 }
 
-// ----- Boucle de rappel toutes les 30s -----
+// Boucle rappels
 async function loopReminders() {
   const now = dayjs().tz(TIMEZONE);
   const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
@@ -158,7 +150,7 @@ async function loopReminders() {
   }
 }
 
-// ----- Commande !prochain_cours -----
+// Comemmande !prochain_cours
 client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   const content = msg.content?.trim().toLowerCase();
@@ -185,30 +177,27 @@ client.on('messageCreate', async (msg) => {
   }
 });
 
-// ----- Ready -----
 client.once('ready', async () => {
   console.log(`🤖 Connecté en tant que ${client.user.tag}`);
-  client.user.setActivity('tes cours HETIC', { type: 3 }); // LISTENING
+  client.user.setActivity('tes cours HETIC', { type: 3 }); 
   await loadCalendar();
 
   // Boucle de rappel toutes les 30 secondes
   setInterval(loopReminders, 30 * 1000);
 
-  // Recharger le calendrier chaque lundi à 08:00 (Europe/Paris)
+  // Recharger le calendrier chaque lundi à 08:00
   cron.schedule('0 8 * * 1', async () => {
     console.log('🔁 Rechargement hebdo du calendrier…');
     sentKeys.clear();
     await loadCalendar();
   }, { timezone: TIMEZONE });
 
-  // Refresh périodique (utile quand tu utilises l’URL ICS)
   cron.schedule('0 */2 * * *', async () => {
     console.log('🔁 Refresh périodique du calendrier…');
     await loadCalendar();
   }, { timezone: TIMEZONE });
 });
 
-// ----- Démarrage -----
 client.login(TOKEN).catch(err => {
   console.error('❌ Échec de connexion Discord :', err.message);
 });
