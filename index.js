@@ -16,6 +16,7 @@ const TIMEZONE = process.env.TIMEZONE || 'Europe/Paris';
 const ICS_FILE = process.env.ICS_FILE; 
 const ICS_URL_GROUPE1  = process.env.ICS_URL_GROUPE1;  
 const ICS_URL_GROUPE2  = process.env.ICS_URL_GROUPE2;  
+const GUILD_ID = process.env.GUILD_ID;
 
 // client Discord  
 const client = new Client({
@@ -146,34 +147,46 @@ function extractGroup(roles){
   return null;
 }  
 
-// Commande !prochain_cours
-client.on('messageCreate', async (msg) => {
-  if (msg.author.bot) return;
-  const roles = msg.member.roles.cache;
-  const group = extractGroup(roles);
-  console.log(group);
-  const content = msg.content?.trim().toLowerCase();
-  if (content === '!prochain_cours') {
-    const now = dayjs().tz(TIMEZONE);
-    const next = getNextEvent(now, group);
-    if (!next) return msg.reply('Aucun cours à venir trouvé.');
+// Slash command: /prochain_cours
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName !== 'prochain_cours') return;
 
-    const { course, prof } = parseSummary(next.summary, next.description);
-
-    const embed = new EmbedBuilder()
-      .setColor(0x3498DB)
-      .setTitle('📌 Prochain cours')
-      .addFields(
-        { name: '📅 Jour',  value: next.start.format('dddd DD/MM'), inline: true },
-        { name: '⏰ Heure', value: next.start.format('HH:mm'),      inline: true },
-        { name: '🏫 Salle', value: next.location || '—',            inline: true },
-        { name: '📚 Cours', value: course,                          inline: false },
-        { name: '👨‍🏫 Prof', value: prof,                            inline: false },
-      )
-      .setTimestamp();
-
-    return msg.reply({ embeds: [embed] });
+  const roles = interaction.member?.roles?.cache;
+  const group = roles ? extractGroup(roles) : null;
+  
+  if (!group) {
+    return interaction.reply({ 
+      content: "❌ Aucun groupe détecté sur tes rôles. Contacte un admin pour obtenir le rôle 'Developper Web', 'PGE', 'Data&AI' ou 'Marketing'.", 
+      ephemeral: true 
+    });
   }
+
+  const now = dayjs().tz(TIMEZONE);
+  const next = getNextEvent(now, group);
+  
+  if (!next) {
+    return interaction.reply({ 
+      content: 'Aucun cours à venir trouvé.', 
+      ephemeral: true 
+    });
+  }
+
+  const { course, prof } = parseSummary(next.summary, next.description);
+  
+  const embed = new EmbedBuilder()
+    .setColor(0x3498DB)
+    .setTitle('📌 Prochain cours')
+    .addFields(
+      { name: '📅 Jour',  value: next.start.format('dddd DD/MM'), inline: true },
+      { name: '⏰ Heure', value: next.start.format('HH:mm'),      inline: true },
+      { name: '🏫 Salle', value: next.location || '—',            inline: true },
+      { name: '📚 Cours', value: course,                          inline: false },
+      { name: '👨‍🏫 Prof', value: prof,                            inline: false },
+    )
+    .setTimestamp();
+
+  return interaction.reply({ embeds: [embed] });
 });
 
 client.once('ready', async () => {
@@ -181,6 +194,27 @@ client.once('ready', async () => {
   client.user.setActivity('tes cours HETIC', { type: 3 });
   await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
   await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
+
+  // Enregistrement de la commande slash
+  async function registerSlashCommands() {
+    const commandData = {
+      name: 'prochain_cours',
+      description: 'Affiche le prochain cours de ton groupe',
+    };
+    try {
+      if (GUILD_ID) {
+        const guild = await client.guilds.fetch(GUILD_ID);
+        await guild.commands.create(commandData);
+        console.log('✅ Commande /prochain_cours enregistrée (guild)');
+      } else {
+        await client.application.commands.create(commandData);
+        console.log('✅ Commande /prochain_cours enregistrée (globale) — propagation ~1h');
+      }
+    } catch (e) {
+      console.error('❌ Enregistrement de la commande slash échoué :', e.message);
+    }
+  }
+  await registerSlashCommands();
 
   // Boucle de rappel toutes les 30 secondes
   setInterval(loopReminders, 30 * 1000);
