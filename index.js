@@ -10,7 +10,6 @@ const tz = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(tz);
 
-// Config depuis .env
 const TOKEN = process.env.DISCORD_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Paris';
@@ -105,7 +104,9 @@ async function loopReminders() {
   }
 
   // Filtre rapide: évènements dans les prochaines 24h
-  const soon = eventsCache.filter(ev => ev.start.isAfter(now) && ev.start.isBefore(now.add(1, 'day')));
+  const soon = Object.values(eventsCache)
+    .flat()
+    .filter(ev => ev.start.isAfter(now) && ev.start.isBefore(now.add(1, 'day')));
 
   for (const ev of soon) {
     const remindAt = ev.start.subtract(10, 'minute');
@@ -188,12 +189,14 @@ client.once('ready', async () => {
   cron.schedule('0 8 * * 1', async () => {
     console.log('🔁 Rechargement hebdo du calendrier…');
     sentKeys.clear();
-    await loadCalendar();
+    await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
+    await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
   }, { timezone: TIMEZONE });
 
   cron.schedule('0 */2 * * *', async () => {
     console.log('🔁 Refresh périodique du calendrier…');
-    await loadCalendar();
+    await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
+    await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
   }, { timezone: TIMEZONE });
 });
 
