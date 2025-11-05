@@ -15,15 +15,16 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Paris';
 const ICS_FILE = process.env.ICS_FILE; 
-const ICS_URL  = process.env.ICS_URL;  
+const ICS_URL_GROUPE1  = process.env.ICS_URL_GROUPE1;  
+const ICS_URL_GROUPE2  = process.env.ICS_URL_GROUPE2;  
 
 // client Discord  
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
-let eventsCache = []; 
-const sentKeys = new Set(); 
+let eventsCache = [];
+const sentKeys = new Set();
 
 
 function squashSpaces(str = '') {
@@ -63,14 +64,14 @@ function parseSummary(summary, description = '') {
 }
 
 // Lecture du calendrier
-async function loadCalendar() {
+async function loadCalendar(url, groupe1) {
   try {
     let data;
     if (ICS_FILE) {
       const raw = fs.readFileSync(ICS_FILE, 'utf8');
       data = ical.sync.parseICS(raw);
     } else if (ICS_URL) {
-      data = await ical.async.fromURL(ICS_URL);
+      data = await ical.async.fromURL(url);
     } else {
       console.warn('⚠️ Ni ICS_FILE ni ICS_URL définis dans .env');
       eventsCache = [];
@@ -91,16 +92,16 @@ async function loadCalendar() {
     }
 
     items.sort((a, b) => a.start.valueOf() - b.start.valueOf());
-    eventsCache = items;
-    console.log(`✅ Calendrier chargé : ${eventsCache.length} évènements.`);
+    eventsCache[groupe1] = items;
+    console.log(`✅ Calendrier chargé pour ${groupe1} : ${eventsCache[groupe1].length} évènements.`);
   } catch (err) {
     console.error('❌ Erreur chargement iCal :', err.message);
   }
 }
 
 // Trouver le prochain cours
-function getNextEvent(now = dayjs().tz(TIMEZONE)) {
-  return eventsCache.find(ev => ev.start.isAfter(now));
+function getNextEvent(now = dayjs().tz(TIMEZONE), group) {
+  return eventsCache[group]?.find(ev => ev.start.isAfter(now));
 }
 
 // Boucle rappels
@@ -141,7 +142,7 @@ async function loopReminders() {
     }
   }
 }
-
+// Extraire le groupe d'un utilisateur
 function extractGroup(roles){
   const roleNames = roles.map(r => r.name);
   if (roleNames.includes('Developper Web') || roleNames.includes('PGE')) {
@@ -162,7 +163,7 @@ client.on('messageCreate', async (msg) => {
   const content = msg.content?.trim().toLowerCase();
   if (content === '!prochain_cours') {
     const now = dayjs().tz(TIMEZONE);
-    const next = getNextEvent(now);
+    const next = getNextEvent(now, group);
     if (!next) return msg.reply('Aucun cours à venir trouvé.');
 
     const { course, prof } = parseSummary(next.summary, next.description);
@@ -185,8 +186,9 @@ client.on('messageCreate', async (msg) => {
 
 client.once('ready', async () => {
   console.log(`🤖 Connecté en tant que ${client.user.tag}`);
-  client.user.setActivity('tes cours HETIC', { type: 3 }); 
-  await loadCalendar();
+  client.user.setActivity('tes cours HETIC', { type: 3 });
+  await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
+  await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
 
   // Boucle de rappel toutes les 30 secondes
   setInterval(loopReminders, 30 * 1000);

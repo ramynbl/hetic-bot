@@ -1,10 +1,4 @@
-// 01_read_ical.js
-// ===============================
-// Objectif : lire ton planning iCal (via URL ou fichier local)
-// et afficher les cours à venir dans la semaine
-// ===============================
 
-// 1) On charge les librairies
 require('dotenv').config();
 const ical = require('node-ical');
 const dayjs = require('dayjs');
@@ -13,28 +7,26 @@ const tz = require('dayjs/plugin/timezone');
 dayjs.extend(utc);
 dayjs.extend(tz);
 
-// 2) On récupère les infos du fichier .env
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Paris';
 const ICS_URL  = process.env.ICS_URL;
-const ICS_FILE = process.env.ICS_FILE; // si tu veux utiliser ton fichier local .ical
+const ICS_FILE = process.env.ICS_FILE; 
 
-// 3) Fonction principale
+// Fonction principale
 async function readCalendar() {
   try {
     let data;
 
-    // --- Si on a un fichier local ---
     if (ICS_FILE) {
       const fs = require('fs');
       const raw = fs.readFileSync(ICS_FILE, 'utf8');
       data = ical.sync.parseICS(raw);
     }
-    // --- Sinon on va chercher directement l'URL du planning ---
+
     else {
       data = await ical.async.fromURL(ICS_URL);
     }
 
-    // --- On prend les événements à venir sur 7 jours ---
+    // événements à venir sur 7 jours
     const now = dayjs().tz(TIMEZONE);
     const in7 = now.add(7, 'day');
 
@@ -51,7 +43,7 @@ async function readCalendar() {
       return;
     }
 
-    // --- On affiche chaque cours trouvé ---
+    // affichage des cours
     console.log(`=== Prochains cours (jusqu'à ${in7.format('DD/MM HH:mm')}) ===`);
     for (const ev of events) {
       const start = dayjs(ev.start).tz(TIMEZONE).format('dddd DD/MM HH:mm');
@@ -63,7 +55,7 @@ async function readCalendar() {
       }
     }
 
-    // --- On affiche le prochain cours ---
+    // affichage du prochain cours
     const next = events[0];
     const nextStart = dayjs(next.start).tz(TIMEZONE);
     console.log('\nProchain cours →');
@@ -82,5 +74,4 @@ async function readCalendar() {
   }
 }
 
-// 4) On lance la fonction
 readCalendar();
