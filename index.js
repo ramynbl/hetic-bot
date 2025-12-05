@@ -31,7 +31,7 @@ function squashSpaces(str = '') {
   return String(str).replace(/\s+/g, ' ').trim();
 }
 
-// Helper
+// Helper regexp pour extraire le nom du cours et du prof
 function parseSummary(summary, description = '') {
   const s = squashSpaces(summary);
 
@@ -180,9 +180,74 @@ client.on('messageCreate', async (msg) => {
   await channel.send({ content: mobileText, embeds: [embed] }).catch(e => console.error('❌ Envoi échec (test) :', e.message));
 });
 
-// Slash command: /prochain_cours
+// Slash commands
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
+
+  // Commande /semaine
+  if (interaction.commandName === 'semaine') {
+    const roles = interaction.member?.roles?.cache;
+    const group = roles ? extractGroup(roles) : null;
+    
+    if (!group) {
+      return interaction.reply({ 
+        content: "❌ Aucun groupe détecté sur tes rôles. Contacte un admin pour obtenir le rôle 'Developper Web', 'PGE', 'Data&AI' ou 'Marketing'.", 
+        ephemeral: true 
+      });
+    }
+
+    const now = dayjs().tz(TIMEZONE);
+    const startOfWeek = now.startOf('week').add(1, 'day'); // Lundi
+    const endOfWeek = startOfWeek.add(5, 'day'); // Vendredi soir
+
+    const weekEvents = eventsCache[group]?.filter(ev => 
+      ev.start.isAfter(startOfWeek) && ev.start.isBefore(endOfWeek)
+    ) || [];
+
+    if (weekEvents.length === 0) {
+      return interaction.reply({ 
+        content: 'Aucun cours cette semaine.', 
+        ephemeral: true 
+      });
+    }
+
+    // Grouper par jour
+    const byDay = {};
+    for (const ev of weekEvents) {
+      const dayKey = ev.start.format('dddd DD/MM');
+      if (!byDay[dayKey]) byDay[dayKey] = [];
+      const { course, prof } = parseSummary(ev.summary, ev.description);
+      byDay[dayKey].push({ ...ev, course, prof });
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x9B59B6)
+      .setTitle(`📅 Cours de la semaine (${group})`)
+      .setTimestamp();
+
+    for (const [day, events] of Object.entries(byDay)) {
+      const lines = events.map(ev => 
+        `• **${ev.start.format('HH:mm')}** - ${ev.course} (${ev.location})`
+      ).join('\n');
+      embed.addFields({ name: day, value: lines, inline: false });
+    }
+
+    // Envoyer en DM
+    try {
+      await interaction.user.send({ embeds: [embed] });
+      return interaction.reply({ 
+        content: '✅ Je t\'ai envoyé ton planning en MP !', 
+        ephemeral: true 
+      });
+    } catch (e) {
+      return interaction.reply({ 
+        content: '❌ Je n\'ai pas pu t\'envoyer de MP. Vérifie que tes DMs sont ouverts.', 
+        ephemeral: true 
+      });
+    }
+  }
+
+  // Commande /prochain_cours
   if (interaction.commandName !== 'prochain_cours') return;
 
   const roles = interaction.member?.roles?.cache;
@@ -228,23 +293,33 @@ client.once('ready', async () => {
   await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
   await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
 
-  // Enregistrement de la commande slash
+  // Enregistrement des commandes slash
   async function registerSlashCommands() {
-    const commandData = {
-      name: 'prochain_cours',
-      description: 'Affiche le prochain cours de ton groupe',
-    };
+    const commands = [
+      {
+        name: 'prochain_cours',
+        description: 'Affiche le prochain cours de ton groupe',
+      },
+      {
+        name: 'semaine',
+        description: 'Envoie le planning de la semaine en message privé',
+      }
+    ];
     try {
       if (GUILD_ID) {
         const guild = await client.guilds.fetch(GUILD_ID);
-        await guild.commands.create(commandData);
-        console.log('✅ Commande /prochain_cours enregistrée (guild)');
+        for (const cmd of commands) {
+          await guild.commands.create(cmd);
+        }
+        console.log('✅ Commandes slash enregistrées (guild)');
       } else {
-        await client.application.commands.create(commandData);
-        console.log('✅ Commande /prochain_cours enregistrée (globale) — propagation ~1h');
+        for (const cmd of commands) {
+          await client.application.commands.create(cmd);
+        }
+        console.log('✅ Commandes slash enregistrées (globale) — propagation ~1h');
       }
     } catch (e) {
-      console.error('❌ Enregistrement de la commande slash échoué :', e.message);
+      console.error('❌ Enregistrement des commandes slash échoué :', e.message);
     }
   }
   await registerSlashCommands();
