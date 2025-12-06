@@ -110,7 +110,7 @@ async function loopReminders() {
     .filter(ev => ev.start.isAfter(now) && ev.start.isBefore(now.add(1, 'day')));
 
   for (const ev of soon) {
-    const remindAt = ev.start.subtract(10, 'minute');
+    const remindAt = ev.start.subtract(20, 'minute');
     if (now.isSame(remindAt, 'minute')) {
       const key = `${ev.uid}_${ev.start.format('YYYY-MM-DD HH:mm')}`;
       if (sentKeys.has(key)) continue;
@@ -120,7 +120,7 @@ async function loopReminders() {
 
       const embed = new EmbedBuilder()
         .setColor(0x2ECC71)
-        .setTitle('🔔 RAPPEL : Cours dans 10 minutes !')
+        .setTitle('🔔 RAPPEL : Cours dans 20 minutes !')
         .addFields(
           { name: '📅 Jour',  value: ev.start.format('dddd DD/MM'), inline: true },
           { name: '⏰ Heure', value: ev.start.format('HH:mm'),      inline: true },
@@ -131,7 +131,7 @@ async function loopReminders() {
         .setTimestamp();
 
       // Texte visible dans la notification mobile (affiche heure / salle / cours)
-      const mobileText = `🔔 Dans 10 min — ${ev.start.format('HH:mm')} — salle ${ev.location || '—'} — ${course}`;
+      const mobileText = `🔔 Dans 20 min — ${ev.start.format('HH:mm')} — salle ${ev.location || '—'} — ${course}`;
 
       await channel.send({ content: mobileText, embeds: [embed] }).catch(e => console.error('❌ Envoi échec :', e.message));
       console.log(`📣 Rappel envoyé pour ${course} (${ev.start.format('YYYY-MM-DD HH:mm')})`);
@@ -158,14 +158,14 @@ client.on('messageCreate', async (msg) => {
 
   const channel = msg.channel;
   const now = dayjs().tz(TIMEZONE);
-  const fakeStart = now.add(10, 'minute');
+  const fakeStart = now.add(20, 'minute');
   const course = 'Test de rappel';
   const prof = 'Prof. Test';
   const location = 'B101';
 
   const embed = new EmbedBuilder()
     .setColor(0x2ECC71)
-    .setTitle('🔔 RAPPEL (TEST) : Cours dans 10 minutes !')
+    .setTitle('🔔 RAPPEL (TEST) : Cours dans 20 minutes !')
     .addFields(
       { name: '📅 Jour',  value: fakeStart.format('dddd DD/MM'), inline: true },
       { name: '⏰ Heure', value: fakeStart.format('HH:mm'),      inline: true },
@@ -175,7 +175,7 @@ client.on('messageCreate', async (msg) => {
     )
     .setTimestamp();
 
-  const mobileText = `🔔 Dans 10 min — ${fakeStart.format('HH:mm')} — salle ${location} — ${course}`;
+  const mobileText = `🔔 Dans 20 min — ${fakeStart.format('HH:mm')} — salle ${location} — ${course}`;
 
   await channel.send({ content: mobileText, embeds: [embed] }).catch(e => console.error('❌ Envoi échec (test) :', e.message));
 });
