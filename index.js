@@ -184,6 +184,62 @@ client.on('messageCreate', async (msg) => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
+  // Commande /jour
+  if (interaction.commandName === 'jour') {
+    const roles = interaction.member?.roles?.cache;
+    const group = roles ? extractGroup(roles) : null;
+    
+    if (!group) {
+      return interaction.reply({ 
+        content: "❌ Aucun groupe détecté sur tes rôles. Contacte un admin pour obtenir le rôle 'Developper Web', 'PGE', 'Data&AI' ou 'Marketing'.", 
+        ephemeral: true 
+      });
+    }
+
+    const now = dayjs().tz(TIMEZONE);
+    const startOfDay = now.startOf('day');
+    const endOfDay = now.endOf('day');
+
+    const dayEvents = eventsCache[group]?.filter(ev => 
+      ev.start.isAfter(startOfDay) && ev.start.isBefore(endOfDay)
+    ) || [];
+
+    if (dayEvents.length === 0) {
+      return interaction.reply({ 
+        content: 'Aucun cours aujourd\'hui.', 
+        ephemeral: true 
+      });
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0xF39C12)
+      .setTitle(`📅 Cours du jour (${group})`)
+      .setTimestamp();
+
+    for (const ev of dayEvents) {
+      const { course, prof } = parseSummary(ev.summary, ev.description);
+      const time = ev.start.format('HH:mm');
+      const dayKey = ev.start.format('dddd DD/MM');
+      const location = ev.location || '—';
+      const value = `**${time}** — ${course}\n🏫 ${location} — ${prof}`;
+      embed.addFields({ name: dayKey, value, inline: false });
+    }
+
+    // Envoyer en DM
+    try {
+      await interaction.user.send({ embeds: [embed] });
+      return interaction.reply({ 
+        content: '✅ Je t\'ai envoyé ton planning du jour en MP !', 
+        ephemeral: true 
+      });
+    } catch (e) {
+      return interaction.reply({ 
+        content: '❌ Je n\'ai pas pu t\'envoyer de MP. Vérifie que tes DMs sont ouverts.', 
+        ephemeral: true 
+      });
+    }
+  }
+
   // Commande /semaine
   if (interaction.commandName === 'semaine') {
     const roles = interaction.member?.roles?.cache;
@@ -303,6 +359,10 @@ client.once('ready', async () => {
       {
         name: 'semaine',
         description: 'Envoie le planning de la semaine en message privé',
+      },
+      {
+        name: 'jour',
+        description: 'Envoie le planning du jour en message privé',
       }
     ];
     try {
