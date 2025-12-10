@@ -7,8 +7,10 @@ const fs = require('fs');
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const tz = require('dayjs/plugin/timezone');
+require('dayjs/locale/fr');
 dayjs.extend(utc);
 dayjs.extend(tz);
+dayjs.locale('fr');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
@@ -18,7 +20,7 @@ const ICS_URL_GROUPE1  = process.env.ICS_URL_GROUPE1;
 const ICS_URL_GROUPE2  = process.env.ICS_URL_GROUPE2;  
 const GUILD_ID = process.env.GUILD_ID;
 
-// client Discord  
+// client Discord  ≥
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
@@ -200,9 +202,15 @@ client.on('interactionCreate', async (interaction) => {
     const startOfDay = now.startOf('day');
     const endOfDay = now.endOf('day');
 
-    const dayEvents = eventsCache[group]?.filter(ev => 
-      ev.start.isAfter(startOfDay) && ev.start.isBefore(endOfDay)
-    ) || [];
+    const dayEvents = eventsCache[group]?.filter(ev => {
+      if (!ev.start.isAfter(startOfDay) || !ev.start.isBefore(endOfDay)) return false;
+      
+      const hour = ev.start.hour();
+      const minute = ev.start.minute();
+      if (hour === 12 && minute === 30) return false;
+      
+      return true;
+    }) || [];
 
     if (dayEvents.length === 0) {
       return interaction.reply({ 
