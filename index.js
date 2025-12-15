@@ -17,15 +17,33 @@ const CHANNEL_ID = process.env.CHANNEL_ID;
 const TIMEZONE = process.env.TIMEZONE || 'Europe/Paris';
 const ICS_FILE = process.env.ICS_FILE; 
 const ICS_URL_GROUPE1  = process.env.ICS_URL_GROUPE1;  
-const ICS_URL_GROUPE2  = process.env.ICS_URL_GROUPE2;  
+const ICS_URL_GROUPE2  = process.env.ICS_URL_GROUPE2;
+const ICS_URL_PM = process.env.ICS_URL_PM;
 const GUILD_ID = process.env.GUILD_ID;
+
+// Rôles à mentionner (plusieurs rôles par groupe)
+const ROLE_IDS = {
+  groupe1: [process.env.ROLE_ID_DEV_WEB, process.env.ROLE_ID_PGE].filter(Boolean),
+  groupe2: [process.env.ROLE_ID_DATA_AI, process.env.ROLE_ID_MARKETING].filter(Boolean),
+  pm: [process.env.ROLE_ID_PM].filter(Boolean),
+};
+
+// Fonction pour générer les mentions d'un groupe
+function getMentions(group) {
+  const roleIds = ROLE_IDS[group] || [];
+  return roleIds.map(id => `<@&${id}>`).join(' ');
+}
 
 // client Discord  ≥
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+  intents: [
+  GatewayIntentBits.Guilds,
+  GatewayIntentBits.GuildMembers,
+  GatewayIntentBits.GuildMessages,
+  GatewayIntentBits.MessageContent],
 });
 
-let eventsCache = { groupe1: [], groupe2: [] };
+let eventsCache = { groupe1: [], groupe2: [], pm: [] };
 const sentKeys = new Set();
 
 
@@ -106,37 +124,40 @@ async function loopReminders() {
     return;
   }
 
-  // Filtre rapide: évènements dans les prochaines 24h
-  const soon = Object.values(eventsCache)
-    .flat()
-    .filter(ev => ev.start.isAfter(now) && ev.start.isBefore(now.add(1, 'day')));
+  // Parcourir chaque groupe séparément pour pouvoir mentionner le bon rôle
+  for (const [group, events] of Object.entries(eventsCache)) {
+    const soon = events.filter(ev => 
+      ev.start.isAfter(now) && ev.start.isBefore(now.add(1, 'day'))
+    );
 
-  for (const ev of soon) {
-    const remindAt = ev.start.subtract(20, 'minute');
-    if (now.isSame(remindAt, 'minute')) {
-      const key = `${ev.uid}_${ev.start.format('YYYY-MM-DD HH:mm')}`;
-      if (sentKeys.has(key)) continue;
-      sentKeys.add(key);
+    for (const ev of soon) {
+      const remindAt = ev.start.subtract(20, 'minute');
+      if (now.isSame(remindAt, 'minute')) {
+        const key = `${ev.uid}_${ev.start.format('YYYY-MM-DD HH:mm')}`;
+        if (sentKeys.has(key)) continue;
+        sentKeys.add(key);
 
-      const { course, prof } = parseSummary(ev.summary, ev.description);
+        const { course, prof } = parseSummary(ev.summary, ev.description);
 
-      const embed = new EmbedBuilder()
-        .setColor(0x2ECC71)
-        .setTitle('🔔 RAPPEL : Cours dans 20 minutes !')
-        .addFields(
-          { name: '📅 Jour',  value: ev.start.format('dddd DD/MM'), inline: true },
-          { name: '⏰ Heure', value: ev.start.format('HH:mm'),      inline: true },
-          { name: '🏫 Salle', value: ev.location || '—',            inline: true },
-          { name: '📚 Cours', value: course,                        inline: false },
-          { name: '👨‍🏫 Prof', value: prof,                          inline: false },
-        )
-        .setTimestamp();
+        const embed = new EmbedBuilder()
+          .setColor(0x2ECC71)
+          .setTitle('🔔 RAPPEL : Cours dans 20 minutes !')
+          .addFields(
+            { name: '📅 Jour',  value: ev.start.format('dddd DD/MM'), inline: true },
+            { name: '⏰ Heure', value: ev.start.format('HH:mm'),      inline: true },
+            { name: '🏫 Salle', value: ev.location || '—',            inline: true },
+            { name: '📚 Cours', value: course,                        inline: false },
+            { name: '👨‍🏫 Prof', value: prof,                          inline: false },
+          )
+          .setTimestamp();
 
-      // Texte visible dans la notification mobile (affiche heure / salle / cours)
-      const mobileText = `🔔 Dans 20 min — ${ev.start.format('HH:mm')} — salle ${ev.location || '—'} — ${course}`;
+        // Mention des rôles correspondant au groupe
+        const mentions = getMentions(group);
+        const mobileText = `${mentions} 🔔 Dans 20 min — ${ev.start.format('HH:mm')} — salle ${ev.location || '—'} — ${course}`;
 
-      await channel.send({ content: mobileText, embeds: [embed] }).catch(e => console.error('❌ Envoi échec :', e.message));
-      console.log(`📣 Rappel envoyé pour ${course} (${ev.start.format('YYYY-MM-DD HH:mm')})`);
+        await channel.send({ content: mobileText, embeds: [embed] }).catch(e => console.error('❌ Envoi échec :', e.message));
+        console.log(`📣 Rappel envoyé pour ${course} (${group}) (${ev.start.format('YYYY-MM-DD HH:mm')})`);
+      }
     }
   }
 }
@@ -149,6 +170,9 @@ function extractGroup(roles){
   if (roleNames.includes('Data&AI') || roleNames.includes('Marketing')) {
     return 'groupe2';
   }
+  if (roleNames.includes('PM')) {
+    return 'pm';
+  }
   return null;
 }  
 
@@ -157,6 +181,14 @@ client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   const content = msg.content?.trim().toLowerCase();
   if (content !== '!test_rappel') return;
+
+  // Extraire le groupe de l'utilisateur
+  const roles = msg.member?.roles?.cache;
+  const group = roles ? extractGroup(roles) : null;
+
+  if (!group) {
+    return msg.reply("❌ Aucun groupe détecté sur tes rôles. Assure-toi d'avoir le rôle 'Developper Web', 'PGE', 'Data&AI', 'Marketing' ou 'PM'.");
+  }
 
   const channel = msg.channel;
   const now = dayjs().tz(TIMEZONE);
@@ -177,7 +209,9 @@ client.on('messageCreate', async (msg) => {
     )
     .setTimestamp();
 
-  const mobileText = `🔔 Dans 20 min — ${fakeStart.format('HH:mm')} — salle ${location} — ${course}`;
+  // Mention des rôles correspondant au groupe
+  const mentions = getMentions(group);
+  const mobileText = `${mentions} 🔔 Dans 20 min — ${fakeStart.format('HH:mm')} — salle ${location} — ${course}`;
 
   await channel.send({ content: mobileText, embeds: [embed] }).catch(e => console.error('❌ Envoi échec (test) :', e.message));
 });
@@ -217,7 +251,7 @@ client.on('interactionCreate', async (interaction) => {
         content: 'Aucun cours aujourd\'hui.', 
         ephemeral: true 
       });
-    }
+    } 
 
     const embed = new EmbedBuilder()
       .setColor(0xF39C12)
@@ -356,6 +390,7 @@ client.once('ready', async () => {
   client.user.setActivity('tes cours HETIC', { type: 3 });
   await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
   await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
+  await loadCalendar(ICS_URL_PM, 'pm');
 
   // Enregistrement des commandes slash
   async function registerSlashCommands() {
@@ -401,12 +436,14 @@ client.once('ready', async () => {
     sentKeys.clear();
     await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
     await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
+    await loadCalendar(ICS_URL_PM, 'pm');
   }, { timezone: TIMEZONE });
 
   cron.schedule('0 */2 * * *', async () => {
     console.log('🔁 Refresh périodique du calendrier…');
     await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
     await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
+    await loadCalendar(ICS_URL_PM, 'pm');
   }, { timezone: TIMEZONE });
 });
 
