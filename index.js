@@ -34,7 +34,7 @@ function getMentions(group) {
   return roleIds.map(id => `<@&${id}>`).join(' ');
 }
 
-// client Discord  ≥
+// client Discord
 const client = new Client({
   intents: [
   GatewayIntentBits.Guilds,
