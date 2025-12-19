@@ -34,6 +34,16 @@ function getMentions(group) {
   return roleIds.map(id => `<@&${id}>`).join(' ');
 }
 
+// Fonction pour obtenir le nom lisible d'un groupe
+function getGroupDisplayName(group) {
+  const names = {
+    groupe1: 'Dev Web / PGE',
+    groupe2: 'Data&AI / Marketing',
+    pm: 'PM'
+  };
+  return names[group] || group;
+}
+
 // client Discord
 const client = new Client({
   intents: [
@@ -255,7 +265,7 @@ client.on('interactionCreate', async (interaction) => {
 
     const embed = new EmbedBuilder()
       .setColor(0xF39C12)
-      .setTitle(`📅 Cours du jour (${group})`)
+      .setTitle(`📅 Cours du jour (${getGroupDisplayName(group)})`)
       .setTimestamp();
 
     for (const ev of dayEvents) {
@@ -320,7 +330,7 @@ client.on('interactionCreate', async (interaction) => {
 
     const embed = new EmbedBuilder()
       .setColor(0x9B59B6)
-      .setTitle(`📅 Cours de la semaine (${group})`)
+      .setTitle(`📅 Cours de la semaine (${getGroupDisplayName(group)})`)
       .setTimestamp();
 
     for (const [day, events] of Object.entries(byDay)) {
