@@ -94,7 +94,7 @@ function parseSummary(summary, description = '') {
 }
 
 // Lecture du calendrier
-async function loadCalendar(url, groupe1) {
+async function loadCalendar(url, groupName) {
   try {
     let data;
       data = await ical.async.fromURL(url);
@@ -113,8 +113,8 @@ async function loadCalendar(url, groupe1) {
     }
 
     items.sort((a, b) => a.start.valueOf() - b.start.valueOf());
-    eventsCache[groupe1] = items;
-    console.log(`✅ Calendrier chargé pour ${groupe1} : ${eventsCache[groupe1].length} évènements.`);
+    eventsCache[groupName] = items;
+    console.log(`✅ Calendrier chargé pour ${groupName} : ${eventsCache[groupName].length} évènements.`);
   } catch (err) {
     console.error('❌ Erreur chargement iCal :', err.message);
   }
