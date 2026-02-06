@@ -359,14 +359,13 @@ client.on('interactionCreate', async (interaction) => {
 
   // Commande /jour
   if (interaction.commandName === 'jour') {
+    await interaction.deferReply({ ephemeral: true });
+
     const roles = interaction.member?.roles?.cache;
     const group = roles ? extractGroup(roles) : null;
     
     if (!group) {
-      return interaction.reply({ 
-        content: "❌ Aucun groupe détecté sur tes rôles. Contacte un admin pour obtenir le rôle 'Developper Web', 'PGE', 'Data&AI' ou 'Marketing'.", 
-        ephemeral: true 
-      });
+      return interaction.editReply("❌ Aucun groupe détecté sur tes rôles. Contacte un admin pour obtenir le rôle 'Developper Web', 'PGE', 'Data&AI' ou 'Marketing'.");
     }
 
     const now = dayjs().tz(TIMEZONE);
@@ -397,38 +396,39 @@ client.on('interactionCreate', async (interaction) => {
 
     for (const ev of dayEvents) {
       const { course, prof } = parseSummary(ev.summary, ev.description);
-      const time = ev.start.format('HH:mm');
-      const dayKey = ev.start.format('dddd DD/MM');
-      const location = ev.location || '—';
-      const value = `**${time}** — ${course}\n🏫 ${location} — ${prof}`;
-      embed.addFields({ name: dayKey, value, inline: false });
+      const timeStart = ev.start.format('HH:mm');
+      const timeEnd = ev.end.format('HH:mm');
+      
+      let location = ev.location || 'Inconnue';
+      location = location.replace(/^salle\s+/i, '');
+
+      const separator = '⎯'.repeat(20);
+
+      embed.addFields({ 
+        name: `⏰ \`${timeStart}\` à \`${timeEnd}\``, 
+        value: `**__${course}__**\n\n👨‍🏫 **${prof}**\n📍 Salle ${location}\n${separator}`, 
+        inline: false 
+      });
     }
 
     // Envoyer en DM
     try {
       await interaction.user.send({ embeds: [embed] });
-      return interaction.reply({ 
-        content: '✅ Je t\'ai envoyé ton planning du jour en MP !', 
-        ephemeral: true 
-      });
+      return interaction.editReply('✅ Je t\'ai envoyé ton planning du jour en MP !');
     } catch (e) {
-      return interaction.reply({ 
-        content: '❌ Je n\'ai pas pu t\'envoyer de MP. Vérifie que tes DMs sont ouverts.', 
-        ephemeral: true 
-      });
+      return interaction.editReply('❌ Je n\'ai pas pu t\'envoyer de MP. Vérifie que tes DMs sont ouverts.');
     }
   }
 
   // Commande /semaine
   if (interaction.commandName === 'semaine') {
+    await interaction.deferReply({ ephemeral: true });
+
     const roles = interaction.member?.roles?.cache;
     const group = roles ? extractGroup(roles) : null;
     
     if (!group) {
-      return interaction.reply({ 
-        content: "❌ Aucun groupe détecté sur tes rôles. Contacte un admin pour obtenir le rôle 'Developper Web', 'PGE', 'Data&AI' ou 'Marketing'.", 
-        ephemeral: true 
-      });
+      return interaction.editReply("❌ Aucun groupe détecté sur tes rôles. Contacte un admin pour obtenir le rôle 'Developper Web', 'PGE', 'Data&AI' ou 'Marketing'.");
     }
 
     const now = dayjs().tz(TIMEZONE);
@@ -460,25 +460,34 @@ client.on('interactionCreate', async (interaction) => {
       .setTitle(`📅 Cours de la semaine (${getGroupDisplayName(group)})`)
       .setTimestamp();
 
-    for (const [day, events] of Object.entries(byDay)) {
-      const lines = events.map(ev => 
-        `• **${ev.start.format('HH:mm')}** - ${ev.course} (${ev.location})`
-      ).join('\n');
-      embed.addFields({ name: day, value: lines, inline: false });
+    const dayEntries = Object.entries(byDay);
+    for (let i = 0; i < dayEntries.length; i++) {
+      const [day, events] = dayEntries[i];
+
+      // Titre du jour bien visible
+      const dayHeader = `\n📆 **__${day.charAt(0).toUpperCase() + day.slice(1)}__**\n${'━'.repeat(25)}`;
+      embed.addFields({ name: '\u200b', value: dayHeader, inline: false });
+
+      // Cours de ce jour
+      for (const ev of events) {
+        const timeStart = ev.start.format('HH:mm');
+        const timeEnd = ev.end.format('HH:mm');
+        let location = ev.location || 'Inconnue';
+        location = location.replace(/^salle\s+/i, '');
+        embed.addFields({ 
+          name: `⏰ \`${timeStart}\` à \`${timeEnd}\``, 
+          value: `**__${ev.course}__**\n👨‍🏫 **${ev.prof}**\n📍 Salle ${location}`, 
+          inline: false 
+        });
+      }
     }
 
     // Envoyer en DM
     try {
       await interaction.user.send({ embeds: [embed] });
-      return interaction.reply({ 
-        content: '✅ Je t\'ai envoyé ton planning en MP !', 
-        ephemeral: true 
-      });
+      return interaction.editReply('✅ Je t\'ai envoyé ton planning en MP !');
     } catch (e) {
-      return interaction.reply({ 
-        content: '❌ Je n\'ai pas pu t\'envoyer de MP. Vérifie que tes DMs sont ouverts.', 
-        ephemeral: true 
-      });
+      return interaction.editReply('❌ Je n\'ai pas pu t\'envoyer de MP. Vérifie que tes DMs sont ouverts.');
     }
   }
 
