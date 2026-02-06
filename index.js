@@ -302,41 +302,52 @@ client.on('messageCreate', async (msg) => {
     return;
   }
 
-  // Commande !test_rappel (test utilisateur)
-  if (content !== '!test_rappel') return;
+  // Commande !test_rappel (admin uniquement)
+  if (content === '!test_rappel') {
+    if (!msg.member.permissions.has('Administrator')) {
+      return msg.reply('❌ Cette commande est réservée aux administrateurs.');
+    }
 
-  // Extraire le groupe de l'utilisateur
-  const roles = msg.member?.roles?.cache;
-  const group = roles ? extractGroup(roles) : null;
+    console.log('📋 Commande !test_rappel déclenchée par', msg.author.tag);
+    await msg.reply('⏳ Envoi d\'un rappel de test...');
 
-  if (!group) {
-    return msg.reply("❌ Aucun groupe détecté sur tes rôles. Assure-toi d'avoir le rôle 'Developper Web', 'PGE', 'Data&AI', 'Marketing' ou 'PM'.");
+    // Extraire le groupe de l'utilisateur
+    const roles = msg.member?.roles?.cache;
+    const group = roles ? extractGroup(roles) : null;
+
+    if (!group) {
+      return msg.reply("❌ Aucun groupe détecté sur tes rôles. Assure-toi d'avoir le rôle 'Developper Web', 'PGE', 'Data&AI', 'Marketing' ou 'PM'.");
+    }
+
+    const channel = msg.channel;
+    const now = dayjs().tz(TIMEZONE);
+    const fakeStart = now.add(20, 'minute');
+    const course = 'Test de rappel';
+    const prof = 'Prof. Test';
+    const location = 'B101';
+
+    const embed = new EmbedBuilder()
+      .setColor(0x2ECC71)
+      .setTitle('🔔 RAPPEL (TEST) : Cours dans 20 minutes !')
+      .addFields(
+        { name: '📅 Jour',  value: fakeStart.format('dddd DD/MM'), inline: true },
+        { name: '⏰ Heure', value: fakeStart.format('HH:mm'),      inline: true },
+        { name: '🏫 Salle', value: location,                        inline: true },
+        { name: '📚 Cours', value: course,                          inline: false },
+        { name: '👨‍🏫 Prof', value: prof,                            inline: false },
+      )
+      .setTimestamp();
+
+    const mobileText = `🔔 Dans 20 min — ${fakeStart.format('HH:mm')} — salle ${location} — ${course}`;
+
+    await msg.author.send({ content: mobileText, embeds: [embed] })
+      .then(() => msg.reply('✅ Check tes DMs !'))
+      .catch(e => {
+        console.error('❌ Envoi échec (test) :', e.message);
+        msg.reply('❌ Impossible d\'envoyer le DM. Vérifie que tes DMs sont ouverts.');
+      });
+    return;
   }
-
-  const channel = msg.channel;
-  const now = dayjs().tz(TIMEZONE);
-  const fakeStart = now.add(20, 'minute');
-  const course = 'Test de rappel';
-  const prof = 'Prof. Test';
-  const location = 'B101';
-
-  const embed = new EmbedBuilder()
-    .setColor(0x2ECC71)
-    .setTitle('🔔 RAPPEL (TEST) : Cours dans 20 minutes !')
-    .addFields(
-      { name: '📅 Jour',  value: fakeStart.format('dddd DD/MM'), inline: true },
-      { name: '⏰ Heure', value: fakeStart.format('HH:mm'),      inline: true },
-      { name: '🏫 Salle', value: location,                        inline: true },
-      { name: '📚 Cours', value: course,                          inline: false },
-      { name: '👨‍🏫 Prof', value: prof,                            inline: false },
-    )
-    .setTimestamp();
-
-  // Mention des rôles correspondant au groupe
-  const mentions = getMentions(group);
-  const mobileText = `${mentions} 🔔 Dans 20 min — ${fakeStart.format('HH:mm')} — salle ${location} — ${course}`;
-
-  await channel.send({ content: mobileText, embeds: [embed] }).catch(e => console.error('❌ Envoi échec (test) :', e.message));
 });
 
 // Slash commands
