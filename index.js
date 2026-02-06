@@ -171,6 +171,88 @@ async function loopReminders() {
     }
   }
 }
+
+// ===============================================================================
+//  FONCTION PRINCIPALE : DIGEST envoie chaque soir à 18:00 les cours du lendemain
+// ===============================================================================
+async function sendDailyDigest(targetUser = null, dateOverride = null) {
+  let target = targetUser;
+  
+  if (!target) {
+    target = await client.channels.fetch(CHANNEL_ID).catch(() => null);
+  }
+  
+  if (!target) {
+    console.error('❌ Destination (Salon ou User) introuvable pour le digest.');
+    return false;
+  }
+
+  const baseDate = dateOverride ? dateOverride : dayjs().tz(TIMEZONE);
+  const startOfTargetDay = baseDate.add(1, 'day').startOf('day');
+  const endOfTargetDay = baseDate.add(1, 'day').endOf('day');
+
+  const groups = ['groupe1', 'groupe2', 'pm'];
+  let messageSent = false;
+
+  // Log pour debug
+  const mode = targetUser ? 'PRIVÉ (Test)' : 'PUBLIC (Cron)';
+  console.log(`🔎 [Digest] Mode: ${mode} | Cible: ${startOfTargetDay.format('DD/MM/YYYY')}`);
+
+  for (const group of groups) {
+    const events = eventsCache[group]?.filter(ev => 
+      ev.start.isAfter(startOfTargetDay) && ev.start.isBefore(endOfTargetDay)
+    ) || [];
+
+    if (events.length === 0) continue;
+
+    const embed = new EmbedBuilder()
+      .setColor(0xE67E22) 
+      .setTitle(`📅 Cours du ${startOfTargetDay.format('dddd DD/MM')} (${getGroupDisplayName(group)})`)
+      .setDescription('Voici les cours prévus. Vérifiez les salles !')
+      .setTimestamp();
+
+    // ... code avant (dans sendDailyDigest)
+
+    for (const ev of events) {
+      const { course, prof } = parseSummary(ev.summary, ev.description);
+      const timeStart = ev.start.format('HH:mm');
+      const timeEnd = ev.end.format('HH:mm');
+      
+      let location = ev.location || 'Inconnue';
+      location = location.replace(/^salle\s+/i, ''); 
+
+      const separator = '⎯'.repeat(20); 
+
+      embed.addFields({ 
+        name: `⏰ \`${timeStart}\` à \`${timeEnd}\``, 
+        value: `**__${course}__**\n\n👨‍🏫 **${prof}**\n📍 Salle ${location}\n${separator}`, 
+        inline: false 
+      });
+    }
+
+    const mentions = getMentions(group);
+    
+    // Modification du message pour les test en DM (pas de mention, message plus personnalisé)
+    const content = targetUser 
+      ? `🕵️ **[PREVIEW ADMIN]** Digest pour le **${group}** :` 
+      : `👋 Bonsoir ${mentions}, n'oubliez pas vos cours de demain !`;
+
+    await target.send({ content: content, embeds: [embed] })
+      .catch(e => console.error(`❌ Erreur envoi digest ${group} :`, e.message));
+    
+    messageSent = true;
+    console.log(`✅ Digest envoyé pour ${group} (${events.length} cours).`);
+  }
+  
+  return messageSent;
+}
+
+// Programmer le digest tous les jours à 18:00
+cron.schedule('0 18 * * *', async () => {
+  console.log('🌇 Lancement du digest quotidien (18h)…');
+  await sendDailyDigest();
+}, { timezone: TIMEZONE });
+
 // Extraire le groupe d'un utilisateur
 function extractGroup(roles){
   const roleNames = roles.map(r => r.name);
@@ -186,10 +268,41 @@ function extractGroup(roles){
   return null;
 }  
 
-// Commande de test pour envoyer un rappel simulé immédiatement
+// Commandes texte
 client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
-  const content = msg.content?.trim().toLowerCase();
+  const content = msg.content.trim();
+
+  // Commandes de test : !test_digest (admin uniquement) et !test_rappel
+  if (content === '!test_digest') {
+    if (!msg.member.permissions.has('Administrator')) {
+      return msg.reply('❌ Cette commande est réservée aux administrateurs.');
+    }
+    
+    console.log('📋 Commande !test_digest déclenchée par', msg.author.tag);
+    await msg.reply('⏳ Génération du digest (Envoyé en MP)...');
+
+    // Pour les tests, si on est vendredi ou samedi, on affiche le planning de lundi
+    const now = dayjs().tz(TIMEZONE);
+    let dateOverride = null;
+    
+    // Vendredi (5) ou Samedi (6) => afficher le planning de Lundi (7)
+    if (now.day() === 5 || now.day() === 6) {
+      dateOverride = now.day(7); 
+      await msg.author.send("ℹ️ **Note debug :** Comme on est le week-end, j'affiche le planning de Lundi pour le test.");
+    }
+
+    const sent = await sendDailyDigest(msg.author, dateOverride);
+
+    if (!sent) {
+      await msg.author.send("📭 Aucun cours trouvé pour le lendemain (ou Lundi). Le bot restera silencieux en prod.");
+    } else {
+      await msg.reply("✅ Check tes DMs !");
+    }
+    return;
+  }
+
+  // Commande !test_rappel (test utilisateur)
   if (content !== '!test_rappel') return;
 
   // Extraire le groupe de l'utilisateur
@@ -229,6 +342,20 @@ client.on('messageCreate', async (msg) => {
 // Slash commands
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
+
+  // Commande /demain
+  if (interaction.commandName === 'demain') {
+    await interaction.deferReply({ ephemeral: true });
+
+    const sent = await sendDailyDigest(interaction.user);
+
+    if (sent) {
+      await interaction.editReply('✅ Je t\'ai envoyé le planning de demain en MP !');
+    } else {
+      await interaction.editReply('📭 Rien de prévu pour demain (ou je n\'ai pas trouvé ton groupe).');
+    }
+    return;
+  }
 
   // Commande /jour
   if (interaction.commandName === 'jour') {
@@ -416,6 +543,10 @@ client.once('ready', async () => {
       {
         name: 'jour',
         description: 'Envoie le planning du jour en message privé',
+      },
+      {
+        name: 'demain',
+        description: 'Envoie le résumé des cours de demain en message privé',
       }
     ];
     try {
@@ -449,7 +580,9 @@ client.once('ready', async () => {
     await loadCalendar(ICS_URL_PM, 'pm');
   }, { timezone: TIMEZONE });
 
-  cron.schedule('0 */2 * * *', async () => {
+  // Recharger le calendrier toutes les heures (au cas où)
+  
+  cron.schedule('0 * * * *', async () => {
     console.log('🔁 Refresh périodique du calendrier…');
     await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
     await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
