@@ -1,86 +1,70 @@
-
+/**
+ * ==============================================================================
+ * 🏗️ IMPORTATIONS & DÉPENDANCES
+ * ==============================================================================
+ */
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const cron = require('node-cron');
 const ical = require('node-ical');
-const fs = require('fs');
+
 const dayjs = require('dayjs');
 const utc = require('dayjs/plugin/utc');
 const tz = require('dayjs/plugin/timezone');
 require('dayjs/locale/fr');
+
+// Configuration DayJS
 dayjs.extend(utc);
 dayjs.extend(tz);
 dayjs.locale('fr');
 
-const TOKEN = process.env.DISCORD_TOKEN;
-const CHANNEL_ID = process.env.CHANNEL_ID;
-const TIMEZONE = process.env.TIMEZONE || 'Europe/Paris';
-const ICS_FILE = process.env.ICS_FILE; 
-const ICS_URL_GROUPE1  = process.env.ICS_URL_GROUPE1;  
-const ICS_URL_GROUPE2  = process.env.ICS_URL_GROUPE2;
-const ICS_URL_PM = process.env.ICS_URL_PM;
-const GUILD_ID = process.env.GUILD_ID;
-
-// Rôles à mentionner (plusieurs rôles par groupe)
-const ROLE_IDS = {
-  groupe1: [process.env.ROLE_ID_DEV_WEB, process.env.ROLE_ID_PGE].filter(Boolean),
-  groupe2: [process.env.ROLE_ID_DATA_AI, process.env.ROLE_ID_MARKETING].filter(Boolean),
-  pm: [process.env.ROLE_ID_PM].filter(Boolean),
+/**
+ * ==============================================================================
+ * ⚙️ CONFIGURATION & CONSTANTES
+ * ==============================================================================
+ */
+const CONFIG = {
+  TOKEN: process.env.DISCORD_TOKEN,
+  CHANNEL_ID: process.env.CHANNEL_ID,
+  GUILD_ID: process.env.GUILD_ID,
+  TIMEZONE: process.env.TIMEZONE || 'Europe/Paris',
+  ICS: {
+    groupe1: process.env.ICS_URL_GROUPE1,
+    groupe2: process.env.ICS_URL_GROUPE2,
+    pm: process.env.ICS_URL_PM,
+  },
+  ROLES: {
+    groupe1: [process.env.ROLE_ID_DEV_WEB, process.env.ROLE_ID_PGE].filter(Boolean),
+    groupe2: [process.env.ROLE_ID_DATA_AI, process.env.ROLE_ID_MARKETING].filter(Boolean),
+    pm: [process.env.ROLE_ID_PM].filter(Boolean),
+  }
 };
 
-// Fonction pour générer les mentions d'un groupe
-function getMentions(group) {
-  const roleIds = ROLE_IDS[group] || [];
-  return roleIds.map(id => `<@&${id}>`).join(' ');
-}
-
-// Fonction pour obtenir le nom lisible d'un groupe
-function getGroupDisplayName(group) {
-  const names = {
-    groupe1: 'Dev Web / PGE',
-    groupe2: 'Data&AI / Marketing',
-    pm: 'PM'
-  };
-  return names[group] || group;
-}
-
-// client Discord
-const client = new Client({
-  intents: [
-  GatewayIntentBits.Guilds,
-  GatewayIntentBits.GuildMembers,
-  GatewayIntentBits.GuildMessages,
-  GatewayIntentBits.MessageContent],
-});
-
-let eventsCache = { groupe1: [], groupe2: [], pm: [] };
-const sentKeys = new Set();
-
+/**
+ * ==============================================================================
+ * 🧠 UTILS & HELPERS
+ * ==============================================================================
+ */
 
 function squashSpaces(str = '') {
   return String(str).replace(/\s+/g, ' ').trim();
 }
 
-// Helper regexp pour extraire le nom du cours et du prof
 function parseSummary(summary, description = '') {
   const s = squashSpaces(summary);
-
-
   const firstComma = s.indexOf(',');
   const course = (firstComma === -1 ? s : s.slice(0, firstComma)).trim() || '(Sans titre)';
 
   let prof = null;
   const profMatch = s.match(/(?:^|,\s*)(M\.|Mme|Mr|Mrs|Ms)\s*[^,]+/i);
+  
   if (profMatch) {
-   
     const start = profMatch.index ?? 0;
     let seg = s.slice(start).replace(/^,\s*/, '');
-
     const nextComma = seg.indexOf(',');
     if (nextComma !== -1) seg = seg.slice(0, nextComma);
     prof = squashSpaces(seg);
   }
-
 
   if (!prof && description) {
     const line = description
@@ -93,19 +77,57 @@ function parseSummary(summary, description = '') {
   return { course, prof: prof || '—' };
 }
 
-// Lecture du calendrier
-async function loadCalendar(url, groupName) {
-  try {
-    let data;
-      data = await ical.async.fromURL(url);
+function getMentions(group) {
+  const roleIds = CONFIG.ROLES[group] || [];
+  return roleIds.map(id => `<@&${id}>`).join(' ');
+}
 
+function getGroupDisplayName(group) {
+  const names = {
+    groupe1: 'Dev Web / PGE',
+    groupe2: 'Data&AI / Marketing',
+    pm: 'PM'
+  };
+  return names[group] || group;
+}
+
+function extractGroup(roles) {
+  const roleNames = roles.map(r => r.name);
+  if (roleNames.includes('Developper Web') || roleNames.includes('PGE')) return 'groupe1';
+  if (roleNames.includes('Data&AI') || roleNames.includes('Marketing')) return 'groupe2';
+  if (roleNames.includes('PM')) return 'pm';
+  return null;
+}
+
+/**
+ * ==============================================================================
+ * 💾 ÉTAT GLOBAL
+ * ==============================================================================
+ */
+let eventsCache = { groupe1: [], groupe2: [], pm: [] };
+const sentKeys = new Set(); 
+
+/**
+ * ==============================================================================
+ * 📅 SERVICE CALENDRIER
+ * ==============================================================================
+ */
+
+async function loadCalendar(url, groupName) {
+  if (!url) {
+    console.warn(`⚠️ URL manquante pour ${groupName}`);
+    return;
+  }
+  try {
+    const data = await ical.async.fromURL(url);
     const items = [];
+    
     for (const v of Object.values(data)) {
       if (v.type !== 'VEVENT' || !v.start || !v.end) continue;
       items.push({
         uid: v.uid || `${v.summary}-${v.start?.toISOString?.()}`,
-        start: dayjs(v.start).tz(TIMEZONE),
-        end: dayjs(v.end).tz(TIMEZONE),
+        start: dayjs(v.start).tz(CONFIG.TIMEZONE),
+        end: dayjs(v.end).tz(CONFIG.TIMEZONE),
         summary: v.summary || '(Sans titre)',
         location: v.location || '—',
         description: v.description ? String(v.description) : ''
@@ -114,27 +136,32 @@ async function loadCalendar(url, groupName) {
 
     items.sort((a, b) => a.start.valueOf() - b.start.valueOf());
     eventsCache[groupName] = items;
-    console.log(`✅ Calendrier chargé pour ${groupName} : ${eventsCache[groupName].length} évènements.`);
+    console.log(`✅ [Calendar] Chargé pour ${groupName} : ${items.length} évènements.`);
   } catch (err) {
-    console.error('❌ Erreur chargement iCal :', err.message);
+    console.error(`❌ [Calendar] Erreur chargement ${groupName} :`, err.message);
   }
 }
 
-// Trouver le prochain cours
-function getNextEvent(now = dayjs().tz(TIMEZONE), group) {
+function getNextEvent(now = dayjs().tz(CONFIG.TIMEZONE), group) {
   return eventsCache[group]?.find(ev => ev.start.isAfter(now));
 }
 
-// Boucle rappels
+/**
+ * ==============================================================================
+ * 🔔 CONTROLLER : RAPPELS & DIGEST
+ * ==============================================================================
+ */
+
+// Rappel 20 minutes avant le cours
 async function loopReminders() {
-  const now = dayjs().tz(TIMEZONE);
-  const channel = await client.channels.fetch(CHANNEL_ID).catch(() => null);
+  const now = dayjs().tz(CONFIG.TIMEZONE);
+  const channel = await client.channels.fetch(CONFIG.CHANNEL_ID).catch(() => null);
+  
   if (!channel) {
-    console.error('❌ Salon introuvable. Vérifie CHANNEL_ID et les permissions du bot.');
+    console.error('❌ [Rappel] Salon introuvable.');
     return;
   }
 
-  // Parcourir chaque groupe séparément pour pouvoir mentionner le bon rôle
   for (const [group, events] of Object.entries(eventsCache)) {
     const soon = events.filter(ev => 
       ev.start.isAfter(now) && ev.start.isBefore(now.add(1, 'day'))
@@ -142,9 +169,11 @@ async function loopReminders() {
 
     for (const ev of soon) {
       const remindAt = ev.start.subtract(20, 'minute');
+      
       if (now.isSame(remindAt, 'minute')) {
         const key = `${ev.uid}_${ev.start.format('YYYY-MM-DD HH:mm')}`;
-        if (sentKeys.has(key)) continue;
+        
+        if (sentKeys.has(key)) continue; 
         sentKeys.add(key);
 
         const { course, prof } = parseSummary(ev.summary, ev.description);
@@ -161,42 +190,38 @@ async function loopReminders() {
           )
           .setTimestamp();
 
-        // Mention des rôles correspondant au groupe
         const mentions = getMentions(group);
         const mobileText = `${mentions} 🔔 Dans 20 min — ${ev.start.format('HH:mm')} — salle ${ev.location || '—'} — ${course}`;
 
-        await channel.send({ content: mobileText, embeds: [embed] }).catch(e => console.error('❌ Envoi échec :', e.message));
-        console.log(`📣 Rappel envoyé pour ${course} (${group}) (${ev.start.format('YYYY-MM-DD HH:mm')})`);
+        await channel.send({ content: mobileText, embeds: [embed] })
+          .catch(e => console.error('❌ [Rappel] Envoi échec :', e.message));
+        
+        console.log(`📣 Rappel envoyé pour ${course} (${group})`);
       }
     }
   }
 }
 
-// ===============================================================================
-//  FONCTION PRINCIPALE : DIGEST envoie chaque soir à 18:00 les cours du lendemain
-// ===============================================================================
+// Digest quotidien des cours du lendemain à 18h00
 async function sendDailyDigest(targetUser = null, dateOverride = null) {
   let target = targetUser;
-  
   if (!target) {
-    target = await client.channels.fetch(CHANNEL_ID).catch(() => null);
+    target = await client.channels.fetch(CONFIG.CHANNEL_ID).catch(() => null);
   }
   
   if (!target) {
-    console.error('❌ Destination (Salon ou User) introuvable pour le digest.');
+    console.error('❌ [Digest] Destination introuvable.');
     return false;
   }
 
-  const baseDate = dateOverride ? dateOverride : dayjs().tz(TIMEZONE);
+  const baseDate = dateOverride ? dateOverride : dayjs().tz(CONFIG.TIMEZONE);
   const startOfTargetDay = baseDate.add(1, 'day').startOf('day');
   const endOfTargetDay = baseDate.add(1, 'day').endOf('day');
 
   const groups = ['groupe1', 'groupe2', 'pm'];
   let messageSent = false;
 
-  // Log pour debug
-  const mode = targetUser ? 'PRIVÉ (Test)' : 'PUBLIC (Cron)';
-  console.log(`🔎 [Digest] Mode: ${mode} | Cible: ${startOfTargetDay.format('DD/MM/YYYY')}`);
+  console.log(`🔎 [Digest] Cible: ${startOfTargetDay.format('DD/MM/YYYY')} (Mode: ${targetUser ? 'PRIVÉ' : 'PUBLIC'})`);
 
   for (const group of groups) {
     const events = eventsCache[group]?.filter(ev => 
@@ -211,119 +236,81 @@ async function sendDailyDigest(targetUser = null, dateOverride = null) {
       .setDescription('Voici les cours prévus. Vérifiez les salles !')
       .setTimestamp();
 
-    // ... code avant (dans sendDailyDigest)
-
     for (const ev of events) {
       const { course, prof } = parseSummary(ev.summary, ev.description);
-      const timeStart = ev.start.format('HH:mm');
-      const timeEnd = ev.end.format('HH:mm');
-      
-      let location = ev.location || 'Inconnue';
-      location = location.replace(/^salle\s+/i, ''); 
-
+      let location = (ev.location || 'Inconnue').replace(/^salle\s+/i, ''); 
       const separator = '⎯'.repeat(20); 
 
       embed.addFields({ 
-        name: `⏰ \`${timeStart}\` à \`${timeEnd}\``, 
-        value: `**__${course}__**\n\n👨‍🏫 **${prof}**\n📍 Salle ${location}\n${separator}`, 
+        name: `⏰ \`${ev.start.format('HH:mm')}\` à \`${ev.end.format('HH:mm')}\``, 
+        value: `**__${course}__**\n👨‍🏫 **${prof}**\n📍 Salle ${location}\n${separator}`, 
         inline: false 
       });
     }
 
     const mentions = getMentions(group);
-    
-    // Modification du message pour les test en DM (pas de mention, message plus personnalisé)
     const content = targetUser 
       ? `🕵️ **[PREVIEW ADMIN]** Digest pour le **${group}** :` 
       : `👋 Bonsoir ${mentions}, n'oubliez pas vos cours de demain !`;
 
     await target.send({ content: content, embeds: [embed] })
-      .catch(e => console.error(`❌ Erreur envoi digest ${group} :`, e.message));
+      .catch(e => console.error(`❌ [Digest] Erreur envoi ${group} :`, e.message));
     
     messageSent = true;
-    console.log(`✅ Digest envoyé pour ${group} (${events.length} cours).`);
   }
   
   return messageSent;
 }
 
-// Programmer le digest tous les jours à 18:00
-cron.schedule('0 18 * * *', async () => {
-  console.log('🌇 Lancement du digest quotidien (18h)…');
-  await sendDailyDigest();
-}, { timezone: TIMEZONE });
+/**
+ * ==============================================================================
+ * 🤖 DISCORD INTERFACE
+ * ==============================================================================
+ */
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ],
+});
 
-// Extraire le groupe d'un utilisateur
-function extractGroup(roles){
-  const roleNames = roles.map(r => r.name);
-  if (roleNames.includes('Developper Web') || roleNames.includes('PGE')) {
-    return 'groupe1';
-  }
-  if (roleNames.includes('Data&AI') || roleNames.includes('Marketing')) {
-    return 'groupe2';
-  }
-  if (roleNames.includes('PM')) {
-    return 'pm';
-  }
-  return null;
-}  
-
-// Commandes texte
+// --- Commandes Texte (Legacy) ---
 client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   const content = msg.content.trim();
 
-  // Commandes de test : !test_digest (admin uniquement) et !test_rappel
+  // 1. !test_digest
   if (content === '!test_digest') {
-    if (!msg.member.permissions.has('Administrator')) {
-      return msg.reply('❌ Cette commande est réservée aux administrateurs.');
-    }
-    
-    console.log('📋 Commande !test_digest déclenchée par', msg.author.tag);
-    await msg.reply('⏳ Génération du digest (Envoyé en MP)...');
+    if (!msg.member.permissions.has('Administrator')) return msg.reply('❌ Admin only.');
+    console.log('📋 Commande !test_digest par', msg.author.tag);
+    await msg.reply('⏳ Génération du digest (MP)...');
 
-    // Pour les tests, si on est vendredi ou samedi, on affiche le planning de lundi
-    const now = dayjs().tz(TIMEZONE);
+    const now = dayjs().tz(CONFIG.TIMEZONE);
     let dateOverride = null;
-    
-    // Vendredi (5) ou Samedi (6) => afficher le planning de Lundi (7)
     if (now.day() === 5 || now.day() === 6) {
       dateOverride = now.day(7); 
-      await msg.author.send("ℹ️ **Note debug :** Comme on est le week-end, j'affiche le planning de Lundi pour le test.");
+      await msg.author.send("ℹ️ **Note debug :** C'est le week-end, j'affiche le planning de Lundi.");
     }
-
     const sent = await sendDailyDigest(msg.author, dateOverride);
-
-    if (!sent) {
-      await msg.author.send("📭 Aucun cours trouvé pour le lendemain (ou Lundi). Le bot restera silencieux en prod.");
-    } else {
-      await msg.reply("✅ Check tes DMs !");
-    }
+    if (!sent) await msg.author.send("📭 Aucun cours trouvé.");
+    else await msg.reply("✅ Check tes DMs !");
     return;
   }
 
-  // Commande !test_rappel (admin uniquement)
+  // 2. !test_rappel
   if (content === '!test_rappel') {
-    if (!msg.member.permissions.has('Administrator')) {
-      return msg.reply('❌ Cette commande est réservée aux administrateurs.');
-    }
-
-    console.log('📋 Commande !test_rappel déclenchée par', msg.author.tag);
+    if (!msg.member.permissions.has('Administrator')) return msg.reply('❌ Admin only.');
+    console.log('📋 Commande !test_rappel par', msg.author.tag);
     await msg.reply('⏳ Envoi d\'un rappel de test...');
 
-    // Extraire le groupe de l'utilisateur
-    const roles = msg.member?.roles?.cache;
-    const group = roles ? extractGroup(roles) : null;
+    const group = extractGroup(msg.member?.roles?.cache);
+    if (!group) return msg.reply("❌ Aucun rôle de groupe détecté sur toi.");
 
-    if (!group) {
-      return msg.reply("❌ Aucun groupe détecté sur tes rôles. Assure-toi d'avoir le rôle 'Developper Web', 'PGE', 'Data&AI', 'Marketing' ou 'PM'.");
-    }
-
-    const channel = msg.channel;
-    const now = dayjs().tz(TIMEZONE);
+    const now = dayjs().tz(CONFIG.TIMEZONE);
     const fakeStart = now.add(20, 'minute');
     const course = 'Test de rappel';
-    const prof = 'Prof. Test';
     const location = 'B101';
 
     const embed = new EmbedBuilder()
@@ -334,7 +321,7 @@ client.on('messageCreate', async (msg) => {
         { name: '⏰ Heure', value: fakeStart.format('HH:mm'),      inline: true },
         { name: '🏫 Salle', value: location,                        inline: true },
         { name: '📚 Cours', value: course,                          inline: false },
-        { name: '👨‍🏫 Prof', value: prof,                            inline: false },
+        { name: '👨‍🏫 Prof', value: 'Prof. Test',                    inline: false },
       )
       .setTimestamp();
 
@@ -342,63 +329,38 @@ client.on('messageCreate', async (msg) => {
 
     await msg.author.send({ content: mobileText, embeds: [embed] })
       .then(() => msg.reply('✅ Check tes DMs !'))
-      .catch(e => {
-        console.error('❌ Envoi échec (test) :', e.message);
-        msg.reply('❌ Impossible d\'envoyer le DM. Vérifie que tes DMs sont ouverts.');
-      });
+      .catch(() => msg.reply('❌ Impossible d\'envoyer le DM (ouverts ?).'));
     return;
   }
 });
 
-// Slash commands
+// --- Commandes Slash ---
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  // Commande /demain
+  try {
+  // 1. /demain
   if (interaction.commandName === 'demain') {
-    await interaction.deferReply({ ephemeral: true });
-
+    await interaction.deferReply({ flags: 64 });
     const sent = await sendDailyDigest(interaction.user);
-
-    if (sent) {
-      await interaction.editReply('✅ Je t\'ai envoyé le planning de demain en MP !');
-    } else {
-      await interaction.editReply('📭 Rien de prévu pour demain (ou je n\'ai pas trouvé ton groupe).');
-    }
+    await interaction.editReply(sent ? '✅ Planning envoyé en MP !' : '📭 Rien de prévu pour demain.');
     return;
   }
 
-  // Commande /jour
+  // 2. /jour
   if (interaction.commandName === 'jour') {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: 64 });
+    const group = extractGroup(interaction.member?.roles?.cache);
+    if (!group) return interaction.editReply("❌ Groupe introuvable (Rôles manquants).");
 
-    const roles = interaction.member?.roles?.cache;
-    const group = roles ? extractGroup(roles) : null;
-    
-    if (!group) {
-      return interaction.editReply("❌ Aucun groupe détecté sur tes rôles. Contacte un admin pour obtenir le rôle 'Developper Web', 'PGE', 'Data&AI' ou 'Marketing'.");
-    }
-
-    const now = dayjs().tz(TIMEZONE);
-    const startOfDay = now.startOf('day');
-    const endOfDay = now.endOf('day');
-
+    const now = dayjs().tz(CONFIG.TIMEZONE);
     const dayEvents = eventsCache[group]?.filter(ev => {
-      if (!ev.start.isAfter(startOfDay) || !ev.start.isBefore(endOfDay)) return false;
-      
-      const hour = ev.start.hour();
-      const minute = ev.start.minute();
-      if (hour === 12 && minute === 30) return false;
-      
-      return true;
+        const isSameDay = ev.start.isSame(now, 'day');
+        const isLunch = (ev.start.hour() === 12 && ev.start.minute() === 30);
+        return isSameDay && !isLunch;
     }) || [];
 
-    if (dayEvents.length === 0) {
-      return interaction.reply({ 
-        content: 'Aucun cours aujourd\'hui.', 
-        ephemeral: true 
-      });
-    } 
+    if (dayEvents.length === 0) return interaction.editReply('Aucun cours aujourd\'hui.');
 
     const embed = new EmbedBuilder()
       .setColor(0xF39C12)
@@ -407,209 +369,208 @@ client.on('interactionCreate', async (interaction) => {
 
     for (const ev of dayEvents) {
       const { course, prof } = parseSummary(ev.summary, ev.description);
-      const timeStart = ev.start.format('HH:mm');
-      const timeEnd = ev.end.format('HH:mm');
-      
-      let location = ev.location || 'Inconnue';
-      location = location.replace(/^salle\s+/i, '');
-
+      let location = (ev.location || 'Inconnue').replace(/^salle\s+/i, '');
       const separator = '⎯'.repeat(20);
-
+      
       embed.addFields({ 
-        name: `⏰ \`${timeStart}\` à \`${timeEnd}\``, 
-        value: `**__${course}__**\n\n👨‍🏫 **${prof}**\n📍 Salle ${location}\n${separator}`, 
+        name: `⏰ \`${ev.start.format('HH:mm')}\` à \`${ev.end.format('HH:mm')}\``, 
+        value: `**__${course}__**\n👨‍🏫 **${prof}**\n📍 Salle ${location}\n${separator}`, 
         inline: false 
       });
     }
 
-    // Envoyer en DM
     try {
-      await interaction.user.send({ embeds: [embed] });
-      return interaction.editReply('✅ Je t\'ai envoyé ton planning du jour en MP !');
+        await interaction.user.send({ embeds: [embed] });
+        return interaction.editReply('✅ Planning envoyé en MP !');
     } catch (e) {
-      return interaction.editReply('❌ Je n\'ai pas pu t\'envoyer de MP. Vérifie que tes DMs sont ouverts.');
+        return interaction.editReply('❌ Erreur MP (DMs fermés ?).');
     }
   }
 
-  // Commande /semaine
+  // 3. /semaine
   if (interaction.commandName === 'semaine') {
-    await interaction.deferReply({ ephemeral: true });
-
-    const roles = interaction.member?.roles?.cache;
-    const group = roles ? extractGroup(roles) : null;
-    
-    if (!group) {
-      return interaction.editReply("❌ Aucun groupe détecté sur tes rôles. Contacte un admin pour obtenir le rôle 'Developper Web', 'PGE', 'Data&AI' ou 'Marketing'.");
-    }
-
-    const now = dayjs().tz(TIMEZONE);
-    const startOfWeek = now.startOf('week').add(1, 'day'); // Lundi
-    const endOfWeek = startOfWeek.add(5, 'day'); // Vendredi soir
-
-    const weekEvents = eventsCache[group]?.filter(ev => 
-      ev.start.isAfter(startOfWeek) && ev.start.isBefore(endOfWeek)
-    ) || [];
-
-    if (weekEvents.length === 0) {
-      return interaction.reply({ 
-        content: 'Aucun cours cette semaine.', 
-        ephemeral: true 
-      });
-    }
-
-    // Grouper par jour
-    const byDay = {};
-    for (const ev of weekEvents) {
-      const dayKey = ev.start.format('dddd DD/MM');
-      if (!byDay[dayKey]) byDay[dayKey] = [];
-      const { course, prof } = parseSummary(ev.summary, ev.description);
-      byDay[dayKey].push({ ...ev, course, prof });
-    }
-
-    const embed = new EmbedBuilder()
-      .setColor(0x9B59B6)
-      .setTitle(`📅 Cours de la semaine (${getGroupDisplayName(group)})`)
-      .setTimestamp();
-
-    const dayEntries = Object.entries(byDay);
-    for (let i = 0; i < dayEntries.length; i++) {
-      const [day, events] = dayEntries[i];
-
-      // Titre du jour bien visible
-      const dayHeader = `\n📆 **__${day.charAt(0).toUpperCase() + day.slice(1)}__**\n${'━'.repeat(25)}`;
-      embed.addFields({ name: '\u200b', value: dayHeader, inline: false });
-
-      // Cours de ce jour
-      for (const ev of events) {
-        const timeStart = ev.start.format('HH:mm');
-        const timeEnd = ev.end.format('HH:mm');
-        let location = ev.location || 'Inconnue';
-        location = location.replace(/^salle\s+/i, '');
-        embed.addFields({ 
-          name: `⏰ \`${timeStart}\` à \`${timeEnd}\``, 
-          value: `**__${ev.course}__**\n👨‍🏫 **${ev.prof}**\n📍 Salle ${location}`, 
-          inline: false 
-        });
+      await interaction.deferReply({ flags: 64 });
+      const group = extractGroup(interaction.member?.roles?.cache);
+      if (!group) return interaction.editReply("❌ Groupe introuvable.");
+  
+      const now = dayjs().tz(CONFIG.TIMEZONE);
+      const startOfWeek = now.startOf('week').add(1, 'day'); // Lundi
+      const endOfWeek = startOfWeek.add(5, 'day'); // Vendredi soir
+  
+      const weekEvents = eventsCache[group]?.filter(ev => 
+        ev.start.isAfter(startOfWeek) && ev.start.isBefore(endOfWeek)
+      ) || [];
+  
+      if (weekEvents.length === 0) return interaction.editReply('Aucun cours cette semaine.');
+  
+      // Groupement
+      const byDay = {};
+      for (const ev of weekEvents) {
+        const dayKey = ev.start.format('dddd DD/MM');
+        if (!byDay[dayKey]) byDay[dayKey] = [];
+        const { course, prof } = parseSummary(ev.summary, ev.description);
+        byDay[dayKey].push({ ...ev, course, prof });
       }
-    }
 
-    // Envoyer en DM
+      // TRI : On s'assure que Lundi passe avant Mardi
+      const sortedDays = Object.entries(byDay).sort((a, b) => {
+        // a[1][0] est le premier cours du jour "a"
+        return a[1][0].start.valueOf() - b[1][0].start.valueOf();
+      });
+  
+      const embeds = [];
+      let currentEmbed = new EmbedBuilder()
+        .setColor(0x9B59B6)
+        .setTitle(`📅 Cours de la semaine (${getGroupDisplayName(group)})`)
+        .setTimestamp();
+      
+      let fieldCount = 0; // Compteur pour la limite de 25 fields Discord
+
+      for (const [day, events] of sortedDays) {
+        const dayHeader = `\n📆 **__${day.charAt(0).toUpperCase() + day.slice(1)}__**\n${'━'.repeat(25)}`;
+        
+        // Sécurité : Si ajouter le header + les cours dépasse 25, on split
+        // (Note: on laisse une marge de sécurité)
+        if (fieldCount + 1 + events.length > 25) {
+          embeds.push(currentEmbed);
+          currentEmbed = new EmbedBuilder()
+            .setColor(0x9B59B6)
+            .setTitle(`📅 Suite de la semaine (${getGroupDisplayName(group)})`)
+            .setTimestamp();
+          fieldCount = 0;
+        }
+
+        currentEmbed.addFields({ name: '\u200b', value: dayHeader, inline: false });
+        fieldCount++;
+  
+        for (const ev of events) {
+          // Double check sécurité au cas où un jour unique est énorme
+          if (fieldCount >= 25) {
+            embeds.push(currentEmbed);
+            currentEmbed = new EmbedBuilder().setColor(0x9B59B6).setTitle('📅 Suite...').setTimestamp();
+            fieldCount = 0;
+          }
+
+          let location = (ev.location || 'Inconnue').replace(/^salle\s+/i, '');
+          currentEmbed.addFields({ 
+            name: `⏰ \`${ev.start.format('HH:mm')}\` à \`${ev.end.format('HH:mm')}\``, 
+            value: `**__${ev.course}__**\n👨‍🏫 **${ev.prof}**\n📍 Salle ${location}`, 
+            inline: false 
+          });
+          fieldCount++;
+        }
+      }
+      
+      // Ne pas oublier d'ajouter le dernier embed en cours
+      embeds.push(currentEmbed);
+  
+      try {
+        await interaction.user.send({ embeds: embeds });
+        return interaction.editReply('✅ Planning semaine envoyé en MP !');
+      } catch (e) {
+        return interaction.editReply('❌ Erreur MP (DMs fermés ?).');
+      }
+  }
+
+  // 4. /prochain_cours
+  if (interaction.commandName === 'prochain_cours') {
+    await interaction.deferReply(); 
+    
+    const group = extractGroup(interaction.member?.roles?.cache);
+    if (!group) return interaction.editReply("❌ Rôle introuvable.");
+    
+    const next = getNextEvent(dayjs().tz(CONFIG.TIMEZONE), group);
+    if (!next) return interaction.editReply('Aucun cours à venir.');
+
+    const { course, prof } = parseSummary(next.summary, next.description);
+    const embed = new EmbedBuilder()
+        .setColor(0x3498DB)
+        .setTitle('📌 Prochain cours')
+        .addFields(
+            { name: '📅 Jour',  value: next.start.format('dddd DD/MM'), inline: true },
+            { name: '⏰ Heure', value: next.start.format('HH:mm'),      inline: true },
+            { name: '🏫 Salle', value: next.location || '—',            inline: true },
+            { name: '📚 Cours', value: course,                          inline: false },
+            { name: '👨‍🏫 Prof', value: prof,                            inline: false },
+        )
+        .setTimestamp();
+        
+    return interaction.editReply({ embeds: [embed] });
+  }
+
+  } catch (err) {
+    console.error(`❌ [Slash] Erreur sur /${interaction.commandName} :`, err.message);
     try {
-      await interaction.user.send({ embeds: [embed] });
-      return interaction.editReply('✅ Je t\'ai envoyé ton planning en MP !');
-    } catch (e) {
-      return interaction.editReply('❌ Je n\'ai pas pu t\'envoyer de MP. Vérifie que tes DMs sont ouverts.');
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply('❌ Une erreur est survenue.');
+      } else {
+        await interaction.reply({ content: '❌ Une erreur est survenue.', flags: 64 });
+      }
+    } catch (_) {
+      // L'interaction est expirée, on ignore
     }
   }
-
-  // Commande /prochain_cours
-  if (interaction.commandName !== 'prochain_cours') return;
-
-  const roles = interaction.member?.roles?.cache;
-  const group = roles ? extractGroup(roles) : null;
-  
-  if (!group) {
-    return interaction.reply({ 
-      content: "❌ Aucun groupe détecté sur tes rôles. Contacte un admin pour obtenir le rôle 'Developper Web', 'PGE', 'Data&AI' ou 'Marketing'.", 
-      ephemeral: true 
-    });
-  }
-
-  const now = dayjs().tz(TIMEZONE);
-  const next = getNextEvent(now, group);
-  
-  if (!next) {
-    return interaction.reply({ 
-      content: 'Aucun cours à venir trouvé.', 
-      ephemeral: true 
-    });
-  }
-
-  const { course, prof } = parseSummary(next.summary, next.description);
-  
-  const embed = new EmbedBuilder()
-    .setColor(0x3498DB)
-    .setTitle('📌 Prochain cours')
-    .addFields(
-      { name: '📅 Jour',  value: next.start.format('dddd DD/MM'), inline: true },
-      { name: '⏰ Heure', value: next.start.format('HH:mm'),      inline: true },
-      { name: '🏫 Salle', value: next.location || '—',            inline: true },
-      { name: '📚 Cours', value: course,                          inline: false },
-      { name: '👨‍🏫 Prof', value: prof,                            inline: false },
-    )
-    .setTimestamp();
-
-  return interaction.reply({ embeds: [embed] });
 });
 
+/**
+ * ==============================================================================
+ * 🚀 STARTUP & SCHEDULING
+ * ==============================================================================
+ */
 client.once('ready', async () => {
   console.log(`🤖 Connecté en tant que ${client.user.tag}`);
-  client.user.setActivity('tes cours HETIC', { type: 3 });
-  await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
-  await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
-  await loadCalendar(ICS_URL_PM, 'pm');
+  client.user.setActivity('tes cours HETIC', { type: 3 }); 
 
-  // Enregistrement des commandes slash
-  async function registerSlashCommands() {
-    const commands = [
-      {
-        name: 'prochain_cours',
-        description: 'Affiche le prochain cours de ton groupe',
-      },
-      {
-        name: 'semaine',
-        description: 'Envoie le planning de la semaine en message privé',
-      },
-      {
-        name: 'jour',
-        description: 'Envoie le planning du jour en message privé',
-      },
-      {
-        name: 'demain',
-        description: 'Envoie le résumé des cours de demain en message privé',
-      }
-    ];
-    try {
-      if (GUILD_ID) {
-        const guild = await client.guilds.fetch(GUILD_ID);
-        for (const cmd of commands) {
-          await guild.commands.create(cmd);
-        }
-        console.log('✅ Commandes slash enregistrées (guild)');
-      } else {
-        for (const cmd of commands) {
-          await client.application.commands.create(cmd);
-        }
-        console.log('✅ Commandes slash enregistrées (globale) — propagation ~1h');
-      }
-    } catch (e) {
-      console.error('❌ Enregistrement des commandes slash échoué :', e.message);
+  // 1. Chargement initial
+  await loadCalendar(CONFIG.ICS.groupe1, 'groupe1');
+  await loadCalendar(CONFIG.ICS.groupe2, 'groupe2');
+  await loadCalendar(CONFIG.ICS.pm, 'pm');
+
+  // 2. Enregistrement des commandes
+  const commands = [
+    { name: 'prochain_cours', description: 'Affiche le prochain cours de ton groupe' },
+    { name: 'semaine', description: 'Envoie le planning de la semaine en MP' },
+    { name: 'jour', description: 'Envoie le planning du jour en MP' },
+    { name: 'demain', description: 'Envoie le résumé des cours de demain en MP' }
+  ];
+
+  try {
+    if (CONFIG.GUILD_ID) {
+      const guild = await client.guilds.fetch(CONFIG.GUILD_ID);
+      for (const cmd of commands) await guild.commands.create(cmd);
+      console.log('✅ Commandes slash enregistrées (Guild).');
+    } else {
+      for (const cmd of commands) await client.application.commands.create(cmd);
+      console.log('✅ Commandes slash enregistrées (Global).');
     }
+  } catch (e) {
+    console.error('❌ Erreur slash commands :', e.message);
   }
-  await registerSlashCommands();
 
-  // Boucle de rappel toutes les 30 secondes
-  setInterval(loopReminders, 30 * 1000);
+  // 3. Boucles
+  setInterval(loopReminders, 30 * 1000); 
 
-  // Recharger le calendrier chaque lundi à 08:00
-  cron.schedule('0 8 * * 1', async () => {
-    console.log('🔁 Rechargement hebdo du calendrier…');
+  // Cron Digest (18h00)
+  cron.schedule('0 18 * * *', async () => {
+    console.log('🌇 [Cron] Digest quotidien…');
+    await sendDailyDigest();
+  }, { timezone: CONFIG.TIMEZONE });
+
+  // Cron Nettoyage Mémoire (03h00 matin) - Remplacement du cron de 8h qui était incomplet
+  cron.schedule('0 3 * * *', () => {
+    console.log('🧹 [Cleanup] Nettoyage préventif sentKeys...');
     sentKeys.clear();
-    await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
-    await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
-    await loadCalendar(ICS_URL_PM, 'pm');
-  }, { timezone: TIMEZONE });
+  }, { timezone: CONFIG.TIMEZONE });
 
-  // Recharger le calendrier toutes les heures (au cas où)
-  
+  // Cron Refresh (Toutes les heures)
   cron.schedule('0 * * * *', async () => {
-    console.log('🔁 Refresh périodique du calendrier…');
-    await loadCalendar(ICS_URL_GROUPE1, 'groupe1');
-    await loadCalendar(ICS_URL_GROUPE2, 'groupe2');
-    await loadCalendar(ICS_URL_PM, 'pm');
-  }, { timezone: TIMEZONE });
+    console.log('🔁 [Cron] Refresh périodique…');
+    await loadCalendar(CONFIG.ICS.groupe1, 'groupe1');
+    await loadCalendar(CONFIG.ICS.groupe2, 'groupe2');
+    await loadCalendar(CONFIG.ICS.pm, 'pm');
+  }, { timezone: CONFIG.TIMEZONE });
 });
 
-client.login(TOKEN).catch(err => {
-  console.error('❌ Échec de connexion Discord :', err.message);
+client.login(CONFIG.TOKEN).catch(err => {
+  console.error('❌ Échec connexion Discord :', err.message);
 });
