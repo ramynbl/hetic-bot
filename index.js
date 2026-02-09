@@ -191,9 +191,10 @@ async function loopReminders() {
           .setTimestamp();
 
         const mentions = getMentions(group);
-        const mobileText = `${mentions} 🔔 Dans 20 min — ${ev.start.format('HH:mm')} — salle ${ev.location || '—'} — ${course}`;
+        const groupLabel = getGroupDisplayName(group);
+        const mobileText = `${mentions}\n📣 ${groupLabel} — 🔔 Dans 20 min — ${ev.start.format('HH:mm')} — salle ${ev.location || '—'} — ${course}`;
 
-        await channel.send({ content: mobileText, embeds: [embed] })
+        await channel.send({ content: mobileText, embeds: [embed], allowedMentions: { parse: ['roles'] } })
           .catch(e => console.error('❌ [Rappel] Envoi échec :', e.message));
         
         console.log(`📣 Rappel envoyé pour ${course} (${group})`);
@@ -249,11 +250,12 @@ async function sendDailyDigest(targetUser = null, dateOverride = null) {
     }
 
     const mentions = getMentions(group);
+    const groupLabel = getGroupDisplayName(group);
     const content = targetUser 
       ? `🕵️ **[PREVIEW ADMIN]** Digest pour le **${group}** :` 
-      : `👋 Bonsoir ${mentions}, n'oubliez pas vos cours de demain !`;
+      : `👋 Bonsoir ${mentions} (${groupLabel}), n'oubliez pas vos cours de demain !`;
 
-    await target.send({ content: content, embeds: [embed] })
+    await target.send({ content: content, embeds: [embed], allowedMentions: { parse: ['roles'] } })
       .catch(e => console.error(`❌ [Digest] Erreur envoi ${group} :`, e.message));
     
     messageSent = true;
@@ -525,6 +527,12 @@ client.once('ready', async () => {
   await loadCalendar(CONFIG.ICS.groupe1, 'groupe1');
   await loadCalendar(CONFIG.ICS.groupe2, 'groupe2');
   await loadCalendar(CONFIG.ICS.pm, 'pm');
+
+  // DEBUG: Vérification des rôles et événements chargés
+  console.log('🔍 [Debug] ROLES configurés :', JSON.stringify(CONFIG.ROLES));
+  for (const [group, events] of Object.entries(eventsCache)) {
+    console.log(`🔍 [Debug] ${group}: ${events.length} événements en cache`);
+  }
 
   // 2. Enregistrement des commandes
   const commands = [
